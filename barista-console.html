@@ -311,7 +311,7 @@
 <div class="toast" id="toast"></div>
 <canvas id="scan-canvas" style="display:none;"></canvas>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
 const TOTAL = 8;
 
@@ -437,7 +437,12 @@ async function startCamera(){
     await video.play();
     scanning = true;
     cameraToggleBtn.textContent = 'Выключить камеру';
-    cameraStatus.textContent = 'Наведите камеру на QR-код клиента';
+
+    if(typeof jsQR !== 'function'){
+      cameraStatus.textContent = 'Библиотека сканирования не загрузилась (нет интернета?). Введите код вручную ниже.';
+    } else {
+      cameraStatus.textContent = 'Наведите камеру на QR-код клиента';
+    }
     requestAnimationFrame(scanLoop);
   } catch(e){
     cameraStatus.textContent = 'Нет доступа к камере. Введите код вручную ниже.';
