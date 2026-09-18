@@ -10,6 +10,20 @@
 <link rel="apple-touch-icon" href="icon-180-apple.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAA9rD2j7amjZLW9mqg2IasYbpA5oto_kc",
+    authDomain: "coffee-a88bd.firebaseapp.com",
+    projectId: "coffee-a88bd",
+    storageBucket: "coffee-a88bd.firebasestorage.app",
+    messagingSenderId: "226343371020",
+    appId: "1:226343371020:web:01d0920c683c1a71058929"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+</script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Nunito+Sans:wght@400;600;700;800&display=swap');
 
@@ -301,36 +315,6 @@
 <script>
 const TOTAL = 8;
 
-// See note in coffee-time-app.html: window.storage only exists in Claude.ai's
-// own preview. On a real published site we fall back to localStorage — but
-// localStorage is PRIVATE to this one device/browser. That means, as shipped,
-// this console can only see member records and edit offers on the SAME PHONE
-// where a customer's app also ran — it will NOT see a customer's stamps from
-// their own phone. Real cross-device sync needs a backend (ask Claude about
-// connecting Firebase or similar).
-function lsGet(key){
-  try{
-    const v = localStorage.getItem(key);
-    return Promise.resolve(v !== null ? { value: v } : null);
-  } catch(e){ return Promise.resolve(null); }
-}
-function lsSet(key, value){
-  try{
-    localStorage.setItem(key, value);
-    return Promise.resolve({ value: value });
-  } catch(e){ return Promise.resolve(null); }
-}
-function lsList(prefix){
-  try{
-    const keys = [];
-    for(let i = 0; i < localStorage.length; i++){
-      const k = localStorage.key(i);
-      if(k && k.indexOf(prefix) === 0) keys.push(k);
-    }
-    return Promise.resolve({ keys: keys });
-  } catch(e){ return Promise.resolve({ keys: [] }); }
-}
-
 const toast = document.getElementById('toast');
 const codeInput = document.getElementById('code-input');
 const findBtn = document.getElementById('find-btn');
@@ -360,8 +344,6 @@ function showToast(msg){
   toast.classList.add('show');
   setTimeout(function(){ toast.classList.remove('show'); }, 1800);
 }
-
-function storageKey(id){ return 'member:' + id; }
 
 function renderCustomer(){
   custId.textContent = 'УЧАСТНИК ' + currentMember.memberId;
@@ -397,9 +379,9 @@ async function findMember(code){
     return;
   }
   try{
-    const result = await lsGet(storageKey(code));
-    if(result && result.value){
-      currentMember = JSON.parse(result.value);
+    const doc = await db.collection('members').doc(code).get();
+    if(doc.exists){
+      currentMember = doc.data();
     } else {
       currentMember = { punches: 0, lifetime: 0, memberId: code };
       await saveMember();
@@ -407,13 +389,14 @@ async function findMember(code){
     customerCard.classList.add('show');
     renderCustomer();
   } catch(e){
+    console.error(e);
     showToast('Не удалось найти клиента');
   }
 }
 
 async function saveMember(){
   try{
-    await lsSet(storageKey(currentMember.memberId), JSON.stringify(currentMember));
+    await db.collection('members').doc(currentMember.memberId).set(currentMember, { merge: true });
   } catch(e){ console.error('Не удалось сохранить', e); }
 }
 
@@ -501,23 +484,14 @@ async function loadClients(){
   const list = document.getElementById('clients-list');
   list.innerHTML = '<p class="empty-note">Загрузка…</p>';
   try{
-    const result = await lsList('member:');
-    const keys = (result && result.keys) ? result.keys : [];
-    if(keys.length === 0){
+    const snapshot = await db.collection('members').orderBy('lifetime', 'desc').get();
+    if(snapshot.empty){
       list.innerHTML = '<p class="empty-note">Пока нет клиентов. Они появятся здесь после первого штампа.</p>';
       return;
     }
-    const members = [];
-    for(let i = 0; i < keys.length; i++){
-      try{
-        const r = await lsGet(keys[i]);
-        if(r && r.value) members.push(JSON.parse(r.value));
-      } catch(e){ /* skip */ }
-    }
-    members.sort(function(a,b){ return (b.lifetime||0) - (a.lifetime||0); });
-
     list.innerHTML = '';
-    members.forEach(function(m){
+    snapshot.forEach(function(doc){
+      const m = doc.data();
       const row = document.createElement('div');
       row.className = 'client-row';
       row.innerHTML =
@@ -539,12 +513,12 @@ async function loadClients(){
       });
     });
   } catch(e){
+    console.error(e);
     list.innerHTML = '<p class="empty-note">Не удалось загрузить список клиентов.</p>';
   }
 }
 
 // ---------- offers management ----------
-const OFFERS_KEY = 'offers';
 let offers = [];
 let editingOfferId = null;
 
@@ -554,10 +528,9 @@ const offerTitleInput = document.getElementById('offer-title');
 const offerDescInput = document.getElementById('offer-desc');
 
 async function loadOffers(){
-  const list = document.getElementById('offers-list');
   try{
-    const result = await lsGet(OFFERS_KEY);
-    offers = (result && result.value) ? JSON.parse(result.value) : [];
+    const snapshot = await db.collection('offers').get();
+    offers = snapshot.docs.map(function(d){ return Object.assign({ id: d.id }, d.data()); });
   } catch(e){ offers = []; }
   renderOffersList();
 }
@@ -588,8 +561,8 @@ function renderOffersList(){
   });
   list.querySelectorAll('.delete-btn').forEach(function(btn){
     btn.addEventListener('click', async function(){
+      try{ await db.collection('offers').doc(btn.dataset.id).delete(); } catch(e){ console.error(e); }
       offers = offers.filter(function(o){ return o.id !== btn.dataset.id; });
-      await saveOffers();
       renderOffersList();
       showToast('Акция удалена');
     });
@@ -611,12 +584,6 @@ function openOfferForm(id){
   offerForm.classList.add('show');
 }
 
-async function saveOffers(){
-  try{
-    await lsSet(OFFERS_KEY, JSON.stringify(offers));
-  } catch(e){ console.error('Не удалось сохранить акции', e); }
-}
-
 document.getElementById('add-offer-btn').addEventListener('click', function(){ openOfferForm(null); });
 document.getElementById('cancel-offer-btn').addEventListener('click', function(){ offerForm.classList.remove('show'); });
 
@@ -626,18 +593,19 @@ document.getElementById('save-offer-btn').addEventListener('click', async functi
   const desc = offerDescInput.value.trim();
   if(!title){ showToast('Введите заголовок акции'); return; }
 
-  if(editingOfferId){
-    const offer = offers.find(function(o){ return o.id === editingOfferId; });
-    offer.tag = tag || 'АКЦИЯ';
-    offer.title = title;
-    offer.desc = desc;
-  } else {
-    offers.push({ id: Date.now().toString(36), tag: tag || 'АКЦИЯ', title: title, desc: desc });
+  try{
+    if(editingOfferId){
+      await db.collection('offers').doc(editingOfferId).set({ tag: tag || 'АКЦИЯ', title: title, desc: desc }, { merge: true });
+    } else {
+      await db.collection('offers').add({ tag: tag || 'АКЦИЯ', title: title, desc: desc });
+    }
+    await loadOffers();
+    offerForm.classList.remove('show');
+    showToast('Акция сохранена');
+  } catch(e){
+    console.error(e);
+    showToast('Не удалось сохранить акцию');
   }
-  await saveOffers();
-  renderOffersList();
-  offerForm.classList.remove('show');
-  showToast('Акция сохранена');
 });
 
 // ---------- tabs ----------
